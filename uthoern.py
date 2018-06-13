@@ -15,21 +15,31 @@ import sys
 from argparse import ArgumentParser
 from os import path
 from sklearn.feature_selection import VarianceThreshold
+from sklearn.decomposition import TruncatedSVD
 import pandas as pd
 import csv
+
+mpd_pattern = 'mpd\.slice\.\d+\-\d+\.json'
 
 
 def train_model(absolute_train_data_path: str, pids: int):
     instance_id = DateTimeUtil.generate_timestamp_id()
     Logger.log_info("Start train model instance '{}'".format(instance_id))
 
-    file_collection = PlaylistParser.parse_folder(absolute_train_data_path)
+    file_collection = PlaylistParser.parse_folder(absolute_train_data_path, mpd_pattern)
 
-    unique_track_uris, sparse_ranging_matrix, template_ranging_matrix = RangingMatrixFactory.create(file_collection,
-                                                                                                    pids)
-
+    unique_track_uris, sparse_ranging_matrix, ranging_bool_mask = RangingMatrixFactory.create(file_collection,
+                                                                                              pids)
     number_of_iterations = 1
     Logger.log_info('Configured number of complete iterations: {}'.format(number_of_iterations))
+
+    selector = TruncatedSVD(n_components=2)
+    selector = selector.fit(sparse_ranging_matrix)
+
+    X_sparse = selector.transform(sparse_ranging_matrix)
+    X = pd.DataFrame(data=X_sparse, dtype=np.float32)
+
+    ModelUtil.save_to_disk(selector, instance_id, 'TruncatedSVD', '')
 
     for ranging_iter in range(number_of_iterations):
         for column_index, target_column in enumerate(unique_track_uris):
@@ -38,11 +48,6 @@ def train_model(absolute_train_data_path: str, pids: int):
 
             y = sparse_ranging_matrix.getcol(column_index)
             y_df = pd.DataFrame(data=y.toarray(), dtype=np.float32)
-
-            selector = VarianceThreshold()
-            X_sparse = selector.fit_transform(sparse_ranging_matrix, y)
-
-            X = pd.DataFrame(data=X_sparse.toarray(), dtype=np.float32)
 
             X_train, X_test, y_train, y_test = train_test_split(X, y_df, random_state=42)
 
@@ -58,19 +63,19 @@ def train_model(absolute_train_data_path: str, pids: int):
             reg_train = reg.fit(X_train.values, y_train)
 
             # Predict
-            predicted_column = reg.predict(X_test.as_matrix())
+            matrix = X_test.as_matrix()
+            predicted_column = reg.predict(matrix)
 
             # Save model
             if ranging_iter == number_of_iterations - 1:
                 ModelUtil.save_to_disk(reg, instance_id, 'Ridge', target_column)
 
             Logger.log_info('Start writing predicted values into rating matrix')
-            i = 0
-            for row_index, row in X_test.iterrows():
-                if template_ranging_matrix[row_index, column_index] != 1:
-                    sparse_ranging_matrix[row_index, column_index] = predicted_column[i]
 
-                i = i + 1
+            row_indexes = X_test.index.values
+            filtered_mask = (ranging_bool_mask[row_indexes, column_index]).toarray()
+            predicted_column[filtered_mask] = 1.0
+            sparse_ranging_matrix[row_indexes, column_index] = predicted_column
 
             Logger.log_info('Finish writing predicted values into rating matrix')
 
