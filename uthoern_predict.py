@@ -31,17 +31,18 @@ def __predict_model(abs_challenge_set_path: str, abs_model_path: str, model_inst
 
     model_dict = ModelUtil.load_dict_from_disk(model_instance_id, 'Ridge', unique_track_uris)
 
+    recommentation_dict = {}
+
     # iteriere über challange set Batch
     for p_slice in p_slices:
         total_number_of_playlist = PlaylistUtil.count_playlists_of_slices([p_slice])
         item_range = p_slice.get_info().get_item_range()
         chunk_count = 0
-        for chunk in np.array_split(p_slice.get_playlist_collection(), 10):
+
+        for chunk in np.array_split(p_slice.get_playlist_collection(), 1):
             chunk_count = chunk_count + 1
             sparse_challenge_matrix, template_sparse_challenge_matrix, pids = RangingMatrixFactory.create_sparse_challenge_set(
                 chunk, item_range, unique_track_uris, len(chunk))
-
-            recommentation_dict = {}
 
             Logger.log_info("Start reducing dimension")
             X_sparse = selector.transform(sparse_challenge_matrix)
@@ -74,7 +75,7 @@ def __predict_model(abs_challenge_set_path: str, abs_model_path: str, model_inst
 
                 selected_columns = all_columns[template_row_array[0, :]]
 
-                sparse_row_df = sparse_row_df.drop(selected_columns)
+                sparse_row_df = __drop_columns(sparse_row_df, selected_columns)
 
                 sparse_row_df = sparse_row_df.T
 
@@ -84,11 +85,18 @@ def __predict_model(abs_challenge_set_path: str, abs_model_path: str, model_inst
 
                 recommendation = sparse_row_df.columns.values[:500]
 
-                recomm_pid = pids[row_index]
+                recomm_pid = pids[row_index] # Fehler !!!!
                 recommentation_dict[recomm_pid] = recommendation
                 Logger.log_info("Finish recommendation for {}".format(str(row_index)))
 
-    DataFrameUtil.export_to_csv(recommentation_dict, './model_storage/{}'.format(str(model_instance_id)))
+        DataFrameUtil.export_to_csv(recommentation_dict, './model_storage/{}'.format(str(model_instance_id)))
+
+
+def __drop_columns(sparse_row_df, selected_columns):
+    cols = [c for c in selected_columns if c in sparse_row_df.columns.values]
+
+    sparse_row_df = sparse_row_df.drop(columns=cols)
+    return sparse_row_df
 
 
 def __receive_path_argument():
