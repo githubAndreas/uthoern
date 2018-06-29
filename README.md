@@ -1,4 +1,4 @@
-# Uthoern
+# Uthoern - TeamLuebeck
 
 Playlist continuation recommender system.
 
